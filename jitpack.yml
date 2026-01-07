@@ -2,4 +2,4 @@ jdk:
   - openjdk17
 
 install:
-  - ./gradlew :breezeh5:assembleRelease
+  - ./gradlew :breezeh5:publishReleasePublicationToMavenLocal
