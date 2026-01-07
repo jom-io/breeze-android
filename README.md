@@ -44,6 +44,9 @@ dependencies { implementation 'com.github.jom-io:breeze-android:v1.0.0' }
    - `onResume` 调用 `BreezeH5Manager.onHostResume()` 重置定时检查。
    - 需要停止时可调用 `BreezeH5Manager.stop()`。
 
+## 工具脚本
+- `package-h5.sh`：在项目根执行，一键安装依赖、构建 H5 包并生成 `release/dev/vX` 的离线包；可用环境变量覆盖 `BASE_URL`（远端资源基址，默认占位 `https://xxx/xxx`）、`BUILD_DIR`（默认 `dist`）、`OUT_DIR`（默认 `release/dev`）、`KEEP_PREVIOUS`（是否保留上一版，默认 true）。
+
 ## 日志与排查
 - `BreezeH5`: 入口、本地版本、检查/下载/激活/无更新等。
 - `ImageCache`: 拦截请求、路径重写。
