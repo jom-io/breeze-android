@@ -1,0 +1,36 @@
+[versions]
+agp = "8.1.3"
+junit = "4.13.2"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
+appcompat = "1.7.0"
+material = "1.12.0"
+activity = "1.9.3"
+constraintlayout = "2.2.0"
+wechatSdkAndroid = "6.8.0"
+wechatSdkAndroidWithoutMta = "5.1.10"
+wechatSdkAndroidWithoutMtaVersion = "6.8.0"
+zxingAndroidEmbedded = "4.2.0"
+zxingCore = "3.5.1"
+jpushCore = "5.9.0"
+jcoreRid = "5.2.0"
+
+[libraries]
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
+espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
+appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
+constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
+wechat-sdk-android = { module = "com.tencent.mm.opensdk:wechat-sdk-android", version.ref = "wechatSdkAndroid" }
+wechat-sdk-android-without-mta = { module = "com.tencent.mm.opensdk:wechat-sdk-android-without-mta", version.ref = "wechatSdkAndroidWithoutMta" }
+wechat-sdk-android-without-mta-v680 = { module = "com.tencent.mm.opensdk:wechat-sdk-android-without-mta", version.ref = "wechatSdkAndroidWithoutMtaVersion" }
+zxing-android-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxingAndroidEmbedded" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxingCore" }
+jpush-core = { module = "cn.jiguang.sdk:jpush", version.ref = "jpushCore" }
+jcore-rid = { module = "cn.jiguang.sdk:jcore", version.ref = "jcoreRid" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+
