@@ -4,6 +4,9 @@ plugins {
     id "maven-publish"
 }
 
+group = "com.github.jom-io"
+version = System.getenv("VERSION") ?: "1.0.0"
+
 android {
     namespace "com.breeze.h5"
     compileSdk 34
@@ -36,6 +39,12 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+        }
+    }
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
         }
     }
 
