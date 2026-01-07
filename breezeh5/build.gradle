@@ -1,6 +1,7 @@
 plugins {
     id "com.android.library"
     id "org.jetbrains.kotlin.android"
+    id "maven-publish"
 }
 
 android {
@@ -35,6 +36,19 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+        }
+    }
+
+    publishing {
+        publications {
+            release(MavenPublication) {
+                afterEvaluate {
+                    from components.release
+                }
+                groupId = project.group.toString()
+                artifactId = "breeze-android"
+                version = project.version.toString()
+            }
         }
     }
 }

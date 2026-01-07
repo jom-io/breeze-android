@@ -19,3 +19,7 @@ allprojects {
 task clean(type: Delete) {
     delete rootProject.buildDir
 }
+
+// JitPack 会注入 VERSION 环境变量为当前 tag，未设置时回退本地版本号
+group = "com.github.jom-io"
+version = System.getenv("VERSION") ?: "1.0.0"

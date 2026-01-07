@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 使用前，请将脚本放在 qingcos-h5 根目录或通过 BASE_DIR 指定目录
+# 使用前，请将脚本放在项目根目录或通过 BASE_DIR 指定目录
 BASE_DIR="${BASE_DIR:-$(pwd)}"
 cd "$BASE_DIR"
 
@@ -15,7 +15,8 @@ const crypto = require('crypto');
 const https = require('https');
 const AdmZip = require('adm-zip');
 
-const BASE = process.env.BASE_URL || 'https://qingcos-res.oss-cn-hangzhou.aliyuncs.com/h5/patch/dev';
+// 使用前请设置实际资源地址，例如 https://xxx/xxx
+const BASE = process.env.BASE_URL || 'https://xxx/xxx';
 const BUILD_DIR = process.env.BUILD_DIR || 'dist';
 const OUT_DIR = process.env.OUT_DIR || 'release/dev';
 const LASTVERSION_URL = `${BASE}/lastversion`;
