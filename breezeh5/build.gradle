@@ -39,12 +39,14 @@ android {
         }
     }
 
+}
+
+// 指定发布 release 变体
+afterEvaluate {
     publishing {
         publications {
             release(MavenPublication) {
-                afterEvaluate {
-                    from components.release
-                }
+                from components.release
                 groupId = project.group.toString()
                 artifactId = "breeze-android"
                 version = project.version.toString()
