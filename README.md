@@ -58,3 +58,4 @@ dependencies { implementation 'com.github.jom-io:breeze-android:v1.0.0' }
 - 仅在入口实际使用本地包时才对远端域名重写（如支付回调）；若走 fallback/远程不会重写。
 - 宿主如需自定义协议（如 `localimg://`），应在插件 client 之后追加，其他拦截/兜底交由插件。
 - 预置离线包：扫描 assets 下 `<assetBasePath>/vX/dist.zip`，取最高版本作为种子解压到 `files/<project>/vX/` 并激活，避免 seedVersion 写死与预置不符。
+- 增量更新：若 OSS 提供 `patch.zip` 与 manifest 增强字段（`patchFrom`、`patchUrl`、`patchHash`、`patchSize`、`deleted`），插件会在本地版本与最新版本差距不超过 5 时优先串行应用补丁；基线不匹配或补丁失败会回退全量包。补丁应用时按 `deleted` 删除老文件，避免残留；更新过程有事务标记，失败会清理半包目录。
