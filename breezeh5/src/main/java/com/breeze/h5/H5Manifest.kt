@@ -5,4 +5,9 @@ data class H5Manifest(
     val url: String,
     val hash: String,
     val size: Long? = null,
+    val patchFrom: Int? = null,
+    val patchUrl: String? = null,
+    val patchHash: String? = null,
+    val patchSize: Long? = null,
+    val deleted: List<String>? = null,
 )

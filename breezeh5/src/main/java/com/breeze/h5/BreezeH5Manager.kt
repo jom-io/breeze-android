@@ -30,6 +30,8 @@ object BreezeH5Manager {
     private const val PREFS = "breeze_h5_prefs"
     private const val KEY_ACTIVE_VERSION = "active_version"
     private const val DEFAULT_DOMAIN = "appassets.androidplatform.net"
+    private const val PATCH_CHAIN_LIMIT = 5
+    private const val UPDATE_MARKER = ".updating.json"
 
     private lateinit var appContext: Context
     private lateinit var config: H5Config
@@ -323,6 +325,11 @@ object BreezeH5Manager {
             Log.d(TAG, "periodic check disabled")
             return
         }
+        val remaining = scheduledTask?.getDelay(TimeUnit.MILLISECONDS)
+        if (remaining != null && remaining in 0 until config.initialCheckDelayMillis) {
+            Log.d(TAG, "skip resetBackoff (remaining=${remaining}ms < initial=${config.initialCheckDelayMillis})")
+            return
+        }
         nextDelayMs = config.initialCheckDelayMillis
         scheduleNext()
     }
@@ -339,44 +346,33 @@ object BreezeH5Manager {
     }
 
     private fun tryDownloadNewVersion(): Boolean {
+        cleanupIncompleteUpdate()
         val latestVersion = fetchLastVersion() ?: return false
-        val manifest = fetchManifest(latestVersion) ?: return false
         val root = projectRoot()
         val current = VersionUtil.findVersions(root).maxOrNull() ?: config.seedVersion
-        if (manifest.version <= current) {
-            Log.d(TAG, "no update: remote=${manifest.version} current=$current")
+        if (latestVersion <= current) {
+            Log.d(TAG, "no update: remote=$latestVersion current=$current")
             return false
         }
 
-        val targetDir = File(root, VersionUtil.versionFolder(manifest.version))
-        val zipFile = File(targetDir, config.assetZipName)
-        targetDir.mkdirs()
+        val manifestLatest = fetchManifest(latestVersion) ?: return false
+        val usePatchChain = latestVersion - current in 1..PATCH_CHAIN_LIMIT
+        val updatedVersion = if (usePatchChain) {
+            applyPatchChain(current, latestVersion) ?: run {
+                Log.w(TAG, "patch chain failed, fallback full v$latestVersion")
+                if (downloadFullBundle(manifestLatest)) manifestLatest.version else null
+            }
+        } else {
+            if (downloadFullBundle(manifestLatest)) manifestLatest.version else null
+        } ?: return false
 
-        try {
-            Log.d(TAG, "download start version=${manifest.version} url=${manifest.url}")
-            download(manifest.url, zipFile)
-            if (manifest.hash.isNotBlank()) {
-                val actual = FileUtil.checksumSha256(zipFile)
-                if (!actual.equals(manifest.hash, ignoreCase = true)) {
-                    throw IOException("Hash mismatch for version ${manifest.version}")
-                }
-            }
-            if (manifest.size != null && manifest.size > 0 && zipFile.length() != manifest.size) {
-                throw IOException("Size mismatch for version ${manifest.version}")
-            }
-            FileUtil.unzip(zipFile, targetDir)
-            VersionUtil.cleanupOldVersions(root, config.keepVersions)
-            val immediate = listener?.onVersionReady(manifest.version, localIndexUrl(manifest.version)) ?: false
-            if (immediate) {
-                saveActiveVersion(manifest.version)
-                Log.d(TAG, "version ${manifest.version} activated immediately")
-            }
-            return true
-        } catch (e: Exception) {
-            Log.e(TAG, "download failed version=${manifest.version}: ${e.message}")
-            FileUtil.deleteQuietly(targetDir)
-            return false
+        VersionUtil.cleanupOldVersions(root, config.keepVersions)
+        val immediate = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: false
+        if (immediate) {
+            saveActiveVersion(updatedVersion)
+            Log.d(TAG, "version $updatedVersion activated immediately")
         }
+        return true
     }
 
     private fun updateBackoff(updated: Boolean) {
@@ -411,7 +407,29 @@ object BreezeH5Manager {
                 Log.w(TAG, "manifest invalid version=$version url=$url hash=$hash")
                 return null
             }
-            return H5Manifest(version = version, url = url, hash = hash, size = size)
+            val patchFrom: Int? = if (json.has("patchFrom")) json.optInt("patchFrom", -1).takeIf { it > 0 } else null
+            val patchUrl: String? = json.optString("patchUrl").takeIf { it.isNotBlank() }
+            val patchHash: String? = json.optString("patchHash").takeIf { it.isNotBlank() }
+            val patchSize: Long? = if (json.has("patchSize")) json.optLong("patchSize") else null
+            val deleted: List<String>? = json.optJSONArray("deleted")?.let { array ->
+                buildList {
+                    for (i in 0 until array.length()) {
+                        val path = array.optString(i)
+                        if (!path.isNullOrBlank()) add(path)
+                    }
+                }.takeIf { it.isNotEmpty() }
+            }
+            return H5Manifest(
+                version = version,
+                url = url,
+                hash = hash,
+                size = size,
+                patchFrom = patchFrom,
+                patchUrl = patchUrl,
+                patchHash = patchHash,
+                patchSize = patchSize,
+                deleted = deleted,
+            )
         }
     }
 
@@ -445,6 +463,119 @@ object BreezeH5Manager {
             target.outputStream().use { output ->
                 response.body?.byteStream()?.copyTo(output) ?: throw IOException("Empty body for $url")
             }
+        }
+    }
+
+    private fun cleanupIncompleteUpdate() {
+        val marker = File(projectRoot(), UPDATE_MARKER)
+        if (!marker.exists()) return
+        val target = runCatching {
+            val txt = marker.readText()
+            JSONObject(txt).optInt("target", -1).takeIf { it > 0 }
+        }.getOrNull()
+        if (target != null) {
+            val dir = File(projectRoot(), VersionUtil.versionFolder(target))
+            FileUtil.deleteQuietly(dir)
+            Log.w(TAG, "cleaned incomplete update for v$target")
+        }
+        marker.delete()
+    }
+
+    private fun markUpdating(version: Int) {
+        val marker = File(projectRoot(), UPDATE_MARKER)
+        marker.parentFile?.mkdirs()
+        runCatching { marker.writeText(JSONObject(mapOf("target" to version)).toString()) }
+    }
+
+    private fun clearUpdating() {
+        File(projectRoot(), UPDATE_MARKER).delete()
+    }
+
+    private fun downloadFullBundle(manifest: H5Manifest): Boolean {
+        val root = projectRoot()
+        val targetDir = File(root, VersionUtil.versionFolder(manifest.version))
+        FileUtil.deleteQuietly(targetDir)
+        targetDir.mkdirs()
+        val zipFile = File(targetDir, config.assetZipName)
+        markUpdating(manifest.version)
+        return try {
+            Log.d(TAG, "download full version=${manifest.version} url=${manifest.url}")
+            download(manifest.url, zipFile)
+            if (manifest.hash.isNotBlank()) {
+                val actual = FileUtil.checksumSha256(zipFile)
+                if (!actual.equals(manifest.hash, ignoreCase = true)) {
+                    throw IOException("Hash mismatch for version ${manifest.version}")
+                }
+            }
+            if (manifest.size != null && manifest.size > 0 && zipFile.length() != manifest.size) {
+                throw IOException("Size mismatch for version ${manifest.version}")
+            }
+            FileUtil.unzip(zipFile, targetDir)
+            clearUpdating()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "download full failed version=${manifest.version}: ${e.message}")
+            FileUtil.deleteQuietly(targetDir)
+            clearUpdating()
+            false
+        }
+    }
+
+    private fun applyPatchChain(currentVersion: Int, targetVersion: Int): Int? {
+        var from = currentVersion
+        var next = from + 1
+        while (next <= targetVersion) {
+            val manifest = fetchManifest(next) ?: return null
+            val patchFrom = manifest.patchFrom
+            if (patchFrom == null || patchFrom != from || manifest.patchUrl.isNullOrBlank() || manifest.patchHash.isNullOrBlank()) {
+                Log.w(TAG, "patch unavailable for v$next (patchFrom=$patchFrom, url=${manifest.patchUrl})")
+                return null
+            }
+            val ok = applySinglePatch(manifest, from)
+            if (!ok) return null
+            from = next
+            next++
+        }
+        return from
+    }
+
+    private fun applySinglePatch(manifest: H5Manifest, baseVersion: Int): Boolean {
+        val root = projectRoot()
+        val baseDir = File(root, VersionUtil.versionFolder(baseVersion))
+        if (!baseDir.exists()) {
+            Log.w(TAG, "base version not found for patch, v$baseVersion")
+            return false
+        }
+        val targetDir = File(root, VersionUtil.versionFolder(manifest.version))
+        FileUtil.deleteQuietly(targetDir)
+        targetDir.mkdirs()
+
+        val patchFile = File(projectRoot(), "patch_${manifest.version}.zip")
+        markUpdating(manifest.version)
+        return try {
+            FileUtil.copyDir(baseDir, targetDir)
+            Log.d(TAG, "download patch v${manifest.version} from=${manifest.patchFrom} url=${manifest.patchUrl}")
+            download(manifest.patchUrl!!, patchFile)
+            if (!manifest.patchHash.isNullOrBlank()) {
+                val actual = FileUtil.checksumSha256(patchFile)
+                if (!actual.equals(manifest.patchHash, ignoreCase = true)) {
+                    throw IOException("Patch hash mismatch for version ${manifest.version}")
+                }
+            }
+            if (manifest.patchSize != null && manifest.patchSize > 0 && patchFile.length() != manifest.patchSize) {
+                throw IOException("Patch size mismatch for version ${manifest.version}")
+            }
+            FileUtil.unzip(patchFile, targetDir)
+            manifest.deleted?.let { FileUtil.deletePaths(targetDir, it) }
+            clearUpdating()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "apply patch failed version=${manifest.version}: ${e.message}")
+            FileUtil.deleteQuietly(targetDir)
+            clearUpdating()
+            false
+        } finally {
+            patchFile.delete()
         }
     }
 

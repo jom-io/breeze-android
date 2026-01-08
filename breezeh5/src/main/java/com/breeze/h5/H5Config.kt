@@ -10,7 +10,7 @@ data class H5Config(
     val remoteDomains: List<String> = emptyList(),
     val routePrefixes: List<String> = emptyList(),
     val assetBasePath: String = projectName,
-    val assetZipName: String = "dict.zip",
+    val assetZipName: String = "dist.zip",
     val lastVersionPath: String = "lastversion",
     val manifestPattern: String = "v%d/manifest.json",
     val seedVersion: Int = 1,

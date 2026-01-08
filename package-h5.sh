@@ -16,11 +16,12 @@ const https = require('https');
 const AdmZip = require('adm-zip');
 
 // 使用前请设置实际资源地址，例如 https://xxx/xxx
-const BASE = process.env.BASE_URL || 'https://xxx/xxx';
+const BASE = process.env.H5_PATCH_BASE_URL || 'https://xxx/xxx';
 const BUILD_DIR = process.env.BUILD_DIR || 'dist';
 const OUT_DIR = process.env.OUT_DIR || 'release/dev';
 const LASTVERSION_URL = `${BASE}/lastversion`;
-const KEEP_PREVIOUS = process.env.KEEP_PREVIOUS !== 'false'; // 默认保留上一版本
+const KEEP_PREVIOUS = process.env.KEEP_PREVIOUS !== 'false'; // 默认保留上一版本（仅用于 patch 基线，不再镜像输出）
+const PATCH_WORK_DIR = path.join(OUT_DIR, '.patch_work');
 
 function log(msg) { console.log('[pack]', msg); }
 
@@ -82,6 +83,108 @@ function sha256(file) {
   return h.digest('hex');
 }
 
+function rmrf(target) {
+  fs.rmSync(target, { recursive: true, force: true });
+}
+
+function listFiles(dir, base = dir) {
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(full, base));
+    } else if (entry.isFile()) {
+      files.push(path.relative(base, full));
+    }
+  }
+  return files;
+}
+
+function buildFileMap(dir) {
+  const map = new Map();
+  for (const rel of listFiles(dir)) {
+    const posix = rel.split(path.sep).join('/');
+    map.set(posix, sha256(path.join(dir, rel)));
+  }
+  return map;
+}
+
+function diffDirs(oldDir, newDir) {
+  const oldMap = buildFileMap(oldDir);
+  const newMap = buildFileMap(newDir);
+  const changed = [];
+  const deleted = [];
+  for (const [rel, hash] of newMap.entries()) {
+    const oldHash = oldMap.get(rel);
+    if (oldHash !== hash) changed.push(rel);
+  }
+  for (const rel of oldMap.keys()) {
+    if (!newMap.has(rel)) deleted.push(rel);
+  }
+  return { changed, deleted };
+}
+
+function copyChangedFiles(srcDir, destDir, relPaths) {
+  for (const rel of relPaths) {
+    const src = path.join(srcDir, rel);
+    const dest = path.join(destDir, rel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(src, dest);
+  }
+}
+
+async function generatePatch(prevVersion, versionName, versionDir) {
+  if (!prevVersion || prevVersion <= 0) {
+    log('skip patch: no previous version');
+    return {};
+  }
+  const prevManifest = await fetchManifest(prevVersion);
+  if (!prevManifest || !prevManifest.url) {
+    log('skip patch: previous manifest missing');
+    return {};
+  }
+  try {
+    rmrf(PATCH_WORK_DIR);
+    fs.mkdirSync(PATCH_WORK_DIR, { recursive: true });
+    const prevZipPath = path.join(PATCH_WORK_DIR, 'prev.zip');
+    const prevDir = path.join(PATCH_WORK_DIR, 'prev');
+    const patchDir = path.join(PATCH_WORK_DIR, 'patch');
+
+    await download(prevManifest.url, prevZipPath);
+    new AdmZip(prevZipPath).extractAllTo(prevDir, true);
+
+    const { changed, deleted } = diffDirs(prevDir, BUILD_DIR);
+    if (changed.length === 0 && deleted.length === 0) {
+      log('no diff with previous version, skip patch');
+      return {};
+    }
+
+    copyChangedFiles(BUILD_DIR, patchDir, changed);
+
+    const patchZipPath = path.join(versionDir, 'patch.zip');
+    const patchZip = new AdmZip();
+    patchZip.addLocalFolder(patchDir);
+    patchZip.writeZip(patchZipPath);
+
+    const patchMeta = {
+      patchFrom: prevVersion,
+      patchUrl: `${BASE}/${versionName}/patch.zip`,
+      patchHash: sha256(patchZipPath),
+      patchSize: fs.statSync(patchZipPath).size,
+      deleted,
+    };
+    log(`patch generated from v${prevVersion} -> ${versionName}, changed=${changed.length}, deleted=${deleted.length}`);
+    return patchMeta;
+  } catch (e) {
+    log(`patch generation failed: ${e.message}`);
+    return {};
+  } finally {
+    rmrf(PATCH_WORK_DIR);
+  }
+}
+
 (async () => {
   const latest = (await fetchLastVersion()) || 1;
   const next = latest + 1;
@@ -90,30 +193,7 @@ function sha256(file) {
   log(`latest=${latest} -> next=${next}`);
   fs.mkdirSync(versionDir, { recursive: true });
 
-  // 保留上一版本（如果能从 OSS 拿到）
-  if (KEEP_PREVIOUS && latest > 0) {
-    const prevDir = path.join(OUT_DIR, `v${latest}`);
-    if (!fs.existsSync(prevDir)) {
-      const mf = await fetchManifest(latest);
-      if (mf && mf.url) {
-        fs.mkdirSync(prevDir, { recursive: true });
-        const prevZip = path.join(prevDir, 'dict.zip');
-        try {
-          await download(mf.url, prevZip);
-          fs.writeFileSync(path.join(prevDir, 'manifest.json'), JSON.stringify(mf, null, 2));
-          log(`mirrored previous v${latest}`);
-        } catch (e) {
-          log(`mirror previous v${latest} failed: ${e.message}`);
-        }
-      } else {
-        log(`no manifest found for v${latest}, skip mirror`);
-      }
-    } else {
-      log(`previous v${latest} already present locally, skip mirror`);
-    }
-  }
-
-  const zipPath = path.join(versionDir, 'dict.zip');
+  const zipPath = path.join(versionDir, 'dist.zip');
   log(`zip from ${BUILD_DIR} -> ${zipPath}`);
   const zip = new AdmZip();
   zip.addLocalFolder(BUILD_DIR);
@@ -121,11 +201,26 @@ function sha256(file) {
 
   const hash = sha256(zipPath);
   const size = fs.statSync(zipPath).size;
-  const manifest = { version: next, url: `${BASE}/${versionName}/dict.zip`, hash, size };
+
+  const patchMeta = await generatePatch(latest, versionName, versionDir);
+
+  const manifest = {
+    version: next,
+    url: `${BASE}/${versionName}/dist.zip`,
+    hash,
+    size,
+  };
+  if (patchMeta.patchFrom) {
+    manifest.patchFrom = patchMeta.patchFrom;
+    manifest.patchUrl = patchMeta.patchUrl;
+    manifest.patchHash = patchMeta.patchHash;
+    manifest.patchSize = patchMeta.patchSize;
+    manifest.deleted = patchMeta.deleted || [];
+  }
   fs.writeFileSync(path.join(versionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
   fs.writeFileSync(path.join(OUT_DIR, 'lastversion'), JSON.stringify({ version: next }));
 
-  log(`DONE version=${next} hash=${hash} size=${size}`);
+  log(`DONE version=${next} hash=${hash} size=${size} patch=${patchMeta.patchUrl ? 'yes' : 'no'}`);
 })();
 EOF
 

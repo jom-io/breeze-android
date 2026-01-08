@@ -54,4 +54,21 @@ internal object FileUtil {
             file.deleteRecursively()
         }
     }
+
+    fun copyDir(src: File, dest: File) {
+        if (!src.exists()) return
+        if (dest.exists()) dest.deleteRecursively()
+        src.copyRecursively(dest, overwrite = true)
+    }
+
+    fun deletePaths(root: File, paths: List<String>) {
+        paths.forEach { rel ->
+            // 防止路径穿越
+            if (rel.contains("..")) return@forEach
+            val target = File(root, rel)
+            if (target.exists()) {
+                target.deleteRecursively()
+            }
+        }
+    }
 }
