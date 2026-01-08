@@ -6,7 +6,8 @@ BASE_DIR="${BASE_DIR:-$(pwd)}"
 cd "$BASE_DIR"
 
 echo "PWD=$(pwd)"
-mkdir -p scripts release/dev
+OUT_DIR="release"
+mkdir -p scripts "$OUT_DIR"
 
 cat <<'EOF' > scripts/package-h5.js
 const fs = require('fs');
@@ -18,7 +19,7 @@ const AdmZip = require('adm-zip');
 // 使用前请设置实际资源地址，例如 https://xxx/xxx
 const BASE = process.env.H5_PATCH_BASE_URL || 'https://xxx/xxx';
 const BUILD_DIR = process.env.BUILD_DIR || 'dist';
-const OUT_DIR = process.env.OUT_DIR || 'release/dev';
+const OUT_DIR = 'release';
 const LASTVERSION_URL = `${BASE}/lastversion`;
 const KEEP_PREVIOUS = process.env.KEEP_PREVIOUS !== 'false'; // 默认保留上一版本（仅用于 patch 基线，不再镜像输出）
 const PATCH_WORK_DIR = path.join(OUT_DIR, '.patch_work');
@@ -157,8 +158,8 @@ async function generatePatch(prevVersion, versionName, versionDir) {
 
     const { changed, deleted } = diffDirs(prevDir, BUILD_DIR);
     if (changed.length === 0 && deleted.length === 0) {
-      log('no diff with previous version, skip patch');
-      return {};
+      log('no diff with previous version, abort release');
+      throw new Error('NO_DIFF');
     }
 
     copyChangedFiles(BUILD_DIR, patchDir, changed);
@@ -179,6 +180,7 @@ async function generatePatch(prevVersion, versionName, versionDir) {
     return patchMeta;
   } catch (e) {
     log(`patch generation failed: ${e.message}`);
+    if (e.message === 'NO_DIFF') throw e;
     return {};
   } finally {
     rmrf(PATCH_WORK_DIR);
@@ -193,34 +195,44 @@ async function generatePatch(prevVersion, versionName, versionDir) {
   log(`latest=${latest} -> next=${next}`);
   fs.mkdirSync(versionDir, { recursive: true });
 
-  const zipPath = path.join(versionDir, 'dist.zip');
-  log(`zip from ${BUILD_DIR} -> ${zipPath}`);
-  const zip = new AdmZip();
-  zip.addLocalFolder(BUILD_DIR);
-  zip.writeZip(zipPath);
+  try {
+    const patchMeta = await generatePatch(latest, versionName, versionDir);
 
-  const hash = sha256(zipPath);
-  const size = fs.statSync(zipPath).size;
+    const zipPath = path.join(versionDir, 'dist.zip');
+    log(`zip from ${BUILD_DIR} -> ${zipPath}`);
+    const zip = new AdmZip();
+    zip.addLocalFolder(BUILD_DIR);
+    zip.writeZip(zipPath);
 
-  const patchMeta = await generatePatch(latest, versionName, versionDir);
+    const hash = sha256(zipPath);
+    const size = fs.statSync(zipPath).size;
 
-  const manifest = {
-    version: next,
-    url: `${BASE}/${versionName}/dist.zip`,
-    hash,
-    size,
-  };
-  if (patchMeta.patchFrom) {
-    manifest.patchFrom = patchMeta.patchFrom;
-    manifest.patchUrl = patchMeta.patchUrl;
-    manifest.patchHash = patchMeta.patchHash;
-    manifest.patchSize = patchMeta.patchSize;
-    manifest.deleted = patchMeta.deleted || [];
+    const manifest = {
+      version: next,
+      url: `${BASE}/${versionName}/dist.zip`,
+      hash,
+      size,
+    };
+    if (patchMeta.patchFrom) {
+      manifest.patchFrom = patchMeta.patchFrom;
+      manifest.patchUrl = patchMeta.patchUrl;
+      manifest.patchHash = patchMeta.patchHash;
+      manifest.patchSize = patchMeta.patchSize;
+      manifest.deleted = patchMeta.deleted || [];
+    }
+    fs.writeFileSync(path.join(versionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(path.join(OUT_DIR, 'lastversion'), JSON.stringify({ version: next }));
+
+    log(`DONE version=${next} hash=${hash} size=${size} patch=${patchMeta.patchUrl ? 'yes' : 'no'}`);
+  } catch (e) {
+    if (e.message === 'NO_DIFF') {
+      log('NO_DIFF detected, abort release without updating lastversion');
+    } else {
+      log(`package failed: ${e.message}`);
+    }
+    rmrf(versionDir);
+    process.exit(1);
   }
-  fs.writeFileSync(path.join(versionDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
-  fs.writeFileSync(path.join(OUT_DIR, 'lastversion'), JSON.stringify({ version: next }));
-
-  log(`DONE version=${next} hash=${hash} size=${size} patch=${patchMeta.patchUrl ? 'yes' : 'no'}`);
 })();
 EOF
 
@@ -240,5 +252,5 @@ echo "=== package ==="
 node scripts/package-h5.js
 
 echo "=== outputs ==="
-ls -l release/dev || true
-ls -l release/dev/* || true
+ls -l "$OUT_DIR" || true
+ls -l "$OUT_DIR"/* || true
