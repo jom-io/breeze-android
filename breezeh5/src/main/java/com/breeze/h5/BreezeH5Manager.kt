@@ -673,9 +673,17 @@ object BreezeH5Manager {
 
     /** 触发入口加载：本地优先，缺失则 fallback */
     fun loadEntry(webView: WebView) {
+        // 确保已下载的最新版本被激活
+        latestLocalVersion()?.let { latest ->
+            val active = activeVersion()
+            if (active == null || latest > active) {
+                saveActiveVersion(latest)
+            }
+        }
         val entry = resolveEntryUrl() ?: return
         webView.loadUrl(entry)
     }
+
 }
 
 fun interface H5UpdateListener {
