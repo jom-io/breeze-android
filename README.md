@@ -11,7 +11,7 @@
 ## 引入依赖（JitPack）
 ```gradle
 repositories { maven { url 'https://jitpack.io' } }
-dependencies { implementation 'com.github.jom-io:breeze-android:1.0.3' }
+dependencies { implementation 'com.github.jom-io:breeze-android:1.0.4' }
 ```
 如需升级，替换为最新 tag。
 
@@ -49,7 +49,7 @@ dependencies { implementation 'com.github.jom-io:breeze-android:1.0.3' }
    - 需要停止时可调用 `BreezeH5Manager.stop()`。
 
 ## 工具脚本
-- `package-h5.sh`：在项目根执行，一键安装依赖、构建 H5 包并生成 `release/dev/vX` 的离线包；可用环境变量覆盖 `H5_PATCH_BASE_URL`（远端资源基址，默认占位 `https://xxx/xxx`）、`BUILD_DIR`（默认 `dist`）、`OUT_DIR`（默认 `release/dev`）、`KEEP_PREVIOUS`（是否保留上一版，默认 true）。
+- `package-h5.sh`：在项目根执行，一键安装依赖、构建 H5 包并生成 `release/<env>/vX` 的离线包；可用环境变量覆盖 `H5_PATCH_BASE_URL`（远端资源基址，默认占位 `https://xxx/xxx`）、`BUILD_DIR`（默认 `dist`）、`OUT_DIR`（默认 `release/<env>`）、`KEEP_PREVIOUS`（是否保留上一版，默认 true）。
 
 ## 日志与排查
 - `BreezeH5`: 入口、本地版本、检查/下载/激活/无更新等。

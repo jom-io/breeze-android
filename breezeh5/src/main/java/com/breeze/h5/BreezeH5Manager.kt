@@ -407,8 +407,7 @@ object BreezeH5Manager {
         VersionUtil.cleanupOldVersions(root, config.keepVersions)
         val immediate = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: false
         if (immediate) {
-            saveActiveVersion(updatedVersion)
-            Log.d(TAG, "version $updatedVersion activated immediately")
+            Log.d(TAG, "version $updatedVersion ready (awaiting host decision/activation)")
         }
         return true
     }
