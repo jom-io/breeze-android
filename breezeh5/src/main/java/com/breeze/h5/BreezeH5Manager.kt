@@ -100,6 +100,26 @@ object BreezeH5Manager {
         }
     }
 
+    /**
+     * 手动检查更新（同步执行，不重置定时/回退），返回是否有可用的新版本或已下载未激活的版本。
+     */
+    fun manualCheckForUpdates(): UpdateResult {
+        if (hasPendingUnactivated()) {
+            Log.d(TAG, "manualCheck: pending unactivated version")
+            return UpdateResult.NEW_AVAILABLE
+        }
+        if (config.useWifiOnly && !NetworkUtil.isWifi(appContext)) {
+            Log.d(TAG, "manualCheck: skip (wifi only)")
+            return UpdateResult.NONE
+        }
+        val updated = tryDownloadNewVersion()
+        return if (updated || hasPendingUnactivated()) {
+            UpdateResult.NEW_AVAILABLE
+        } else {
+            UpdateResult.NONE
+        }
+    }
+
     fun stop() {
         scheduledTask?.cancel(true)
         scheduler.shutdownNow()
@@ -138,6 +158,15 @@ object BreezeH5Manager {
         best?.let { Log.d(TAG, "bestLocalVersion=$it") } ?: Log.w(TAG, "no local version found")
         return best
     }
+
+    private fun hasPendingUnactivated(): Boolean {
+        val active = activeVersion() ?: return bestLocalVersion() != null
+        val best = bestLocalVersion() ?: return false
+        return best > active
+    }
+
+    /** 当前激活的版本（用户已确认使用的版本），若未激活则返回 null */
+    fun currentActiveVersion(): Int? = activeVersion()
 
     fun bestLocalIndexUrl(): String? {
         val root = projectRoot()
@@ -647,4 +676,9 @@ fun interface H5UpdateListener {
 
 fun interface H5LoadListener {
     fun onAllFailed(url: String?, reason: String?)
+}
+
+enum class UpdateResult {
+    NONE,
+    NEW_AVAILABLE,
 }

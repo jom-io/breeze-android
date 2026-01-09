@@ -23,7 +23,7 @@ dependencies { implementation 'com.github.jom-io:breeze-android:v1.0.0' }
 - `routePrefixes`: 需重写的路由前缀（如支付回调 hash）
 - `assetBasePath`: 资产种子前缀（通常与 projectName 相同）
 - 其他：`assetZipName=dist.zip`，`lastVersionPath=lastversion`，`manifestPattern=v%d/manifest.json`
-- 定时：`initialCheckDelayMillis=30s`，`min=5min`，`max=60min`，`backoffMultiplier=2`，`enablePeriodicCheck=true`，`useWifiOnly=true`，`keepVersions=5`
+- 定时：`initialCheckDelayMillis=30s`，`min=60s`，`max=5min`，`backoffMultiplier=2`，`enablePeriodicCheck=true`，`useWifiOnly=true`，`keepVersions=5`
 
 ## 使用步骤
 1) **初始化**
@@ -35,10 +35,14 @@ dependencies { implementation 'com.github.jom-io:breeze-android:v1.0.0' }
    ```
    - 预置种子：自动扫描 assets `<assetBasePath>/vX/dist.zip` 取最高版本解压并激活。
    - 加载入口：`BreezeH5Manager.loadEntry(webView)`（本地优先，缺失则 fallback）。
+   - 检查节奏：首次 30s，最小间隔 60s，最大间隔 5 分钟，退避倍增。
 
 2) **WebView 拦截**
    - 默认使用插件内置 `webViewClient`（`attachWebView`），或在宿主 `shouldInterceptRequest/shouldOverrideUrlLoading` 中委托 `BreezeH5Manager` 处理。
    - appassets 请求自动补全 `<project>/vX/`；命中远端域名/路由时（且入口为本地包）自动重写到本地入口，子资源也映射。
+
+3) **手动检查与提示**
+   - 调用 `manualCheckForUpdates()` 获取是否有可用新版本（含已下载未激活）；宿主/H5 可据此弹窗提醒（如调用 `handleUpgradeReminder`），确认后再执行 `loadEntry` 激活。
 
 3) **生命周期**
    - `onResume` 调用 `BreezeH5Manager.onHostResume()` 重置定时检查。
