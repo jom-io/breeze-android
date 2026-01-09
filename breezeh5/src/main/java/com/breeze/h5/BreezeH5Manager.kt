@@ -150,23 +150,32 @@ object BreezeH5Manager {
         val root = projectRoot()
         val active = activeVersion()
         val versions = VersionUtil.findVersions(root)
-        val best = when {
+        val latest = versions.maxOrNull()
+        // 兼顾历史逻辑：若当前激活版本存在且仍在本地，则优先返回激活版本，否则返回最新
+        val chosen = when {
             active != null && versions.contains(active) -> active
-            versions.isNotEmpty() -> versions.maxOrNull()
-            else -> null
+            else -> latest
         }
-        best?.let { Log.d(TAG, "bestLocalVersion=$it") } ?: Log.w(TAG, "no local version found")
-        return best
+        chosen?.let { Log.d(TAG, "bestLocalVersion=$it") } ?: Log.w(TAG, "no local version found")
+        return chosen
     }
 
     private fun hasPendingUnactivated(): Boolean {
-        val active = activeVersion() ?: return bestLocalVersion() != null
-        val best = bestLocalVersion() ?: return false
-        return best > active
+        val latest = latestLocalVersion() ?: return false
+        val active = activeVersion()
+        return active == null || latest > active
     }
 
     /** 当前激活的版本（用户已确认使用的版本），若未激活则返回 null */
     fun currentActiveVersion(): Int? = activeVersion()
+
+    /** 最新下载到本地的版本（不论是否激活） */
+    private fun latestLocalVersion(): Int? {
+        val versions = VersionUtil.findVersions(projectRoot())
+        val latest = versions.maxOrNull()
+        latest?.let { Log.d(TAG, "latestLocalVersion=$it") }
+        return latest
+    }
 
     fun bestLocalIndexUrl(): String? {
         val root = projectRoot()
