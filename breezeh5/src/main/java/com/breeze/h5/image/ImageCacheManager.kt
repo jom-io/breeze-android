@@ -21,6 +21,7 @@ class ImageCacheManager(context: Context) {
     private val tag = "ImageCacheManager"
     private val cacheDir: File
     // 小文件：当前拦截线程一次下载写缓存；大文件：单线程异步队列缓存
+    private val downloadExecutor: ExecutorService = Executors.newFixedThreadPool(4)
     private val largeFileExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     init {
