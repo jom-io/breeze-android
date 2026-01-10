@@ -237,8 +237,9 @@ object BreezeH5Manager {
         Log.d(TAG, "assetLoader built prefix=$prefix root=${root.absolutePath}")
 
         // 初始化图片缓存（兼容宿主旧目录 image_cache）
-        imageCacheManager = ImageCacheManager(appContext)
-        imageCacheInterceptor = ImageCacheInterceptor(imageCacheManager, assetLoader)
+        imageCacheManager = ImageCacheManager(appContext).also { mgr ->
+            imageCacheInterceptor = ImageCacheInterceptor(mgr, assetLoader)
+        }
     }
 
     /** 插件内置的 WebViewClient：处理 appassets 拦截与兜底 */
