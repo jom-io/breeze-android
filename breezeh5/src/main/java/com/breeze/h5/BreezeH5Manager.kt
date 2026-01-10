@@ -10,13 +10,15 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.VisibleForTesting
 import androidx.webkit.WebViewAssetLoader
-import java.io.ByteArrayInputStream
+import com.breeze.h5.image.ImageCacheInterceptor
+import com.breeze.h5.image.ImageCacheManager
 import com.breeze.h5.internal.FileUtil
 import com.breeze.h5.internal.NetworkUtil
 import com.breeze.h5.internal.VersionUtil
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -43,6 +45,8 @@ object BreezeH5Manager {
     private var scheduledTask: ScheduledFuture<*>? = null
     private var nextDelayMs: Long = 0
     private var lastEntryIsLocal: Boolean = false
+    private var imageCacheManager: ImageCacheManager? = null
+    private var imageCacheInterceptor: ImageCacheInterceptor? = null
 
     private val prefs: SharedPreferences by lazy {
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -231,6 +235,10 @@ object BreezeH5Manager {
             .addPathHandler(prefix, WebViewAssetLoader.InternalStoragePathHandler(appContext, root))
             .build()
         Log.d(TAG, "assetLoader built prefix=$prefix root=${root.absolutePath}")
+
+        // 初始化图片缓存（兼容宿主旧目录 image_cache）
+        imageCacheManager = ImageCacheManager(appContext)
+        imageCacheInterceptor = ImageCacheInterceptor(imageCacheManager, assetLoader)
     }
 
     /** 插件内置的 WebViewClient：处理 appassets 拦截与兜底 */
@@ -241,9 +249,13 @@ object BreezeH5Manager {
                 request: WebResourceRequest,
             ): WebResourceResponse? {
                 val loader = assetLoader ?: return null
+                var target = request.url
+                // 图片缓存拦截（localimg://）
+                imageCacheInterceptor?.intercept(target)?.let { return it }
+
                 // 远端域名（remoteDomains/routePrefixes）重写到本地入口
                 val mapped = mapToLocalIfPossible(request.url.toString())
-                var target = if (mapped != request.url.toString()) Uri.parse(mapped) else request.url
+                target = if (mapped != request.url.toString()) Uri.parse(mapped) else request.url
 
                 // appassets 域名下，补全 projectName 与版本号前缀
                 if (target.host.equals(DEFAULT_DOMAIN, ignoreCase = true)) {
