@@ -59,12 +59,14 @@ class ImageCacheManager(context: Context) {
         return file != null && file.exists() && file.length() > 0
     }
 
-    fun loadCachedStream(url: String): Pair<InputStream, String>? {
+    data class CachedStream(val stream: InputStream, val mime: String, val path: String)
+
+    fun loadCachedStream(url: String): CachedStream? {
         val cacheKey = getCacheKey(url)
         val file = getCachedFile(cacheKey) ?: return null
         if (!file.exists() || file.length() == 0L) return null
         val mime = getMimeType(file.name)
-        return Pair(FileInputStream(file), mime)
+        return CachedStream(FileInputStream(file), mime, file.absolutePath)
     }
 
     fun downloadAsync(url: String, callback: DownloadCallback?) {

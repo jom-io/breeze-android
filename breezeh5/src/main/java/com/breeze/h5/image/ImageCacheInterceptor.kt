@@ -22,8 +22,8 @@ class ImageCacheInterceptor(
         val httpsUrl = url.replaceFirst("localimg://", "https://")
 
         // 1) 命中缓存直接返回
-        cacheManager.loadCachedStream(httpsUrl)?.let { (stream, mime) ->
-            Log.d(tag, ">>> 使用缓存图片: $httpsUrl")
+        cacheManager.loadCachedStream(httpsUrl)?.let { (stream, mime, filePath) ->
+            Log.d(tag, ">>> 使用缓存图片: $httpsUrl, file=$filePath")
             return WebResourceResponse(mime, "utf-8", stream)
         }
 
