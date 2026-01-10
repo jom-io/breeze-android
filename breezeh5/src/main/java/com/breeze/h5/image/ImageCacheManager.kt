@@ -2,6 +2,7 @@ package com.breeze.h5.image
 
 import android.content.Context
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -19,7 +20,7 @@ import java.util.concurrent.Executors
 class ImageCacheManager(context: Context) {
     private val tag = "ImageCacheManager"
     private val cacheDir: File
-    private val downloadExecutor: ExecutorService = Executors.newFixedThreadPool(3)
+    private val downloadExecutor: ExecutorService = Executors.newFixedThreadPool(10)
 
     init {
         cacheDir = File(context.filesDir, CACHE_DIR_NAME)
@@ -104,15 +105,69 @@ class ImageCacheManager(context: Context) {
                 return null
             }
             val contentType = connection.contentType ?: guessMime(url)
-            val data = connection.inputStream.use { it.readBytes() }
+            val cacheKey = getCacheKey(url)
+            val ext = getExtensionFromContentType(contentType, url)
+            val target = File(cacheDir, cacheKey + ext)
+
+            // 小文件：一次下载返回+写缓存；大文件：直接返回流，异步排队缓存
+            val isLarge = connection.contentLengthLong > CACHE_ASYNC_THRESHOLD_BYTES
+            if (isLarge) {
+                Log.d(tag, "loadBlocking large file, async cache queued url=$url size=${connection.contentLengthLong}")
+                cacheAsync(url)
+                val mime = contentType
+                val data = connection.inputStream.use { it.readBytes() }
+                val elapsed = System.currentTimeMillis() - start
+                Log.d(tag, "loadBlocking large return len=${data.size} cost=${elapsed}ms url=$url")
+                return CachedResult(data, mime)
+            }
+
+            val data: ByteArray
+            connection.inputStream.use { input ->
+                val bufferOut = ByteArrayOutputStream()
+                FileOutputStream(target).use { fileOut ->
+                    copyStream(input, bufferOut, fileOut)
+                }
+                data = bufferOut.toByteArray()
+            }
             val elapsed = System.currentTimeMillis() - start
-            Log.d(tag, "loadBlocking ok len=${data.size} cost=${elapsed}ms url=$url")
+            Log.d(tag, "loadBlocking ok len=${data.size} cost=${elapsed}ms url=$url cache=${target.absolutePath}")
             CachedResult(data, contentType)
         } catch (e: Exception) {
             Log.e(tag, "loadBlocking failed url=$url", e)
             null
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun cacheAsync(url: String) {
+        downloadExecutor.execute {
+            try {
+                val conn = openConnection(url) ?: return@execute
+                val code = conn.responseCode
+                if (code != HttpURLConnection.HTTP_OK) return@execute
+                val contentType = conn.contentType ?: guessMime(url)
+                val cacheKey = getCacheKey(url)
+                val ext = getExtensionFromContentType(contentType, url)
+                val target = File(cacheDir, cacheKey + ext)
+                conn.inputStream.use { input ->
+                    FileOutputStream(target).use { output ->
+                        copyStream(input, null, output)
+                    }
+                }
+                Log.d(tag, "async cache done url=$url file=${target.absolutePath}")
+            } catch (e: Exception) {
+                Log.e(tag, "async cache failed url=$url", e)
+            }
+        }
+    }
+
+    private fun copyStream(input: InputStream, out1: ByteArrayOutputStream?, out2: FileOutputStream) {
+        val buf = ByteArray(8 * 1024)
+        var n: Int
+        while (input.read(buf).also { n = it } != -1) {
+            out2.write(buf, 0, n)
+            out1?.write(buf, 0, n)
         }
     }
 
@@ -171,5 +226,7 @@ class ImageCacheManager(context: Context) {
 
     companion object {
         private const val CACHE_DIR_NAME = "image_cache"
+        // 超过该大小（字节）视为大文件：首次返回流，不阻塞写缓存，后台排队缓存
+        private const val CACHE_ASYNC_THRESHOLD_BYTES = 2 * 1024 * 1024L // 2MB
     }
 }
