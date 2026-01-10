@@ -20,7 +20,8 @@ import java.util.concurrent.Executors
 class ImageCacheManager(context: Context) {
     private val tag = "ImageCacheManager"
     private val cacheDir: File
-    private val downloadExecutor: ExecutorService = Executors.newFixedThreadPool(10)
+    // 小文件：当前拦截线程一次下载写缓存；大文件：单线程异步队列缓存
+    private val largeFileExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     init {
         cacheDir = File(context.filesDir, CACHE_DIR_NAME)
@@ -141,7 +142,7 @@ class ImageCacheManager(context: Context) {
     }
 
     private fun cacheAsync(url: String) {
-        downloadExecutor.execute {
+        largeFileExecutor.execute {
             try {
                 val conn = openConnection(url) ?: return@execute
                 val code = conn.responseCode
