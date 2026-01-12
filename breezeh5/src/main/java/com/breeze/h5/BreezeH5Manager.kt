@@ -24,6 +24,7 @@ import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.absoluteValue
 import kotlin.math.max
 import kotlin.math.min
 
@@ -643,10 +644,20 @@ object BreezeH5Manager {
         return "https://$DEFAULT_DOMAIN$path"
     }
 
-    private fun activeVersion(): Int? = prefs.getInt(KEY_ACTIVE_VERSION, -1).takeIf { it > 0 }
+    private fun activePrefsKey(): String {
+        val project = config.projectName.ifBlank { "default" }
+        val base = config.baseUrl?.ifBlank { null } ?: "base"
+        val envHash = base.hashCode().absoluteValue
+        return "${KEY_ACTIVE_VERSION}_${project}_$envHash"
+    }
+
+    private fun activeVersion(): Int? {
+        // 工程+环境隔离的激活版本，不回退旧 key，避免跨环境串读
+        return prefs.getInt(activePrefsKey(), -1).takeIf { it > 0 }
+    }
 
     private fun saveActiveVersion(version: Int) {
-        prefs.edit().putInt(KEY_ACTIVE_VERSION, version).apply()
+        prefs.edit().putInt(activePrefsKey(), version).apply()
     }
 
     private fun projectRoot(): File = File(appContext.filesDir, config.projectName)
