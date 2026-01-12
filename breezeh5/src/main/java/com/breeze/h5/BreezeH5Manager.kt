@@ -646,9 +646,7 @@ object BreezeH5Manager {
 
     private fun activePrefsKey(): String {
         val project = config.projectName.ifBlank { "default" }
-        val base = config.baseUrl?.ifBlank { null } ?: "base"
-        val envHash = base.hashCode().absoluteValue
-        return "${KEY_ACTIVE_VERSION}_${project}_$envHash"
+        return "${KEY_ACTIVE_VERSION}_${project}_${envHash()}"
     }
 
     private fun activeVersion(): Int? {
@@ -660,7 +658,7 @@ object BreezeH5Manager {
         prefs.edit().putInt(activePrefsKey(), version).apply()
     }
 
-    private fun projectRoot(): File = File(appContext.filesDir, config.projectName)
+    private fun projectRoot(): File = File(appContext.filesDir, "${config.projectName}_${envHash()}")
 
     /** 确保 appassets 路径包含 /projectName/vX/ 前缀，缺失时补全到当前最佳本地版本 */ 
     private fun ensureAppassetsPath(uri: Uri): Uri {
@@ -676,6 +674,11 @@ object BreezeH5Manager {
             path = versionPrefix + suffix
         }
         return uri.buildUpon().path(path).build()
+    }
+
+    private fun envHash(): Int {
+        val base = config.baseUrl?.ifBlank { null } ?: "base"
+        return base.hashCode().absoluteValue
     }
 
     /**
