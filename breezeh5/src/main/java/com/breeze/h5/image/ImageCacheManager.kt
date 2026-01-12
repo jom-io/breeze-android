@@ -300,7 +300,7 @@ class ImageCacheManager(context: Context) {
         // 超过该大小（字节）视为大文件：首次返回流，不阻塞写缓存，后台排队缓存
         private const val CACHE_ASYNC_THRESHOLD_BYTES = 2 * 1024 * 1024L // 2MB
         private const val EXPIRE_MS = 7L * 24 * 60 * 60 * 1000 // 7天未访问删除
-        private const val CLEAN_INTERVAL_MS = 30_000L // 测试用：最小清理间隔 30s
+        private const val CLEAN_INTERVAL_MS = 6L * 60 * 60 * 1000 // 最小清理间隔 6 小时
         private const val CLEAN_MARKER = ".last_cleanup"
         private const val INIT_CLEAN_DELAY_MS = 30_000L // 避开启动前30s
     }
