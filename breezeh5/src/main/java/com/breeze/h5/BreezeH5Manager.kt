@@ -41,7 +41,6 @@ object BreezeH5Manager {
     private var loadListener: H5LoadListener? = null
     private var assetLoader: WebViewAssetLoader? = null
     private val client = OkHttpClient()
-    private val ioExecutor = Executors.newSingleThreadExecutor()
     private var scheduler = Executors.newSingleThreadScheduledExecutor()
     private var scheduledTask: ScheduledFuture<*>? = null
     private var nextDelayMs: Long = 0
@@ -354,8 +353,8 @@ object BreezeH5Manager {
     }
 
     /**
-     * 环境切换后若本地无任何版本，则主动拉取该环境的最新全量包，避免加载到其他环境的残留导致 ENOENT。
-     * 仅在本地版本列表为空时触发；在后台线程执行，不阻塞主线程。
+     * 环境切换后若本地无任何版本，则同步拉取该环境最新全量包；若线上也无包，后续会走 fallback。
+     * 仅在本地版本列表为空时触发，避免读取其他环境残留导致 ENOENT。
      */
     private fun ensureEnvBundleIfMissing() {
         val root = projectRoot()
@@ -365,27 +364,25 @@ object BreezeH5Manager {
             return
         }
         Log.w(TAG, "env bundle missing, will fetch latest full bundle for ${config.baseUrl}")
-        ioExecutor.execute {
-            try {
-                val latest = fetchLastVersion()
-                if (latest == null || latest <= 0) {
-                    Log.w(TAG, "env fetch skip: lastversion unavailable")
-                    return@execute
-                }
-                val manifest = fetchManifest(latest)
-                if (manifest == null || manifest.url.isNullOrBlank()) {
-                    Log.w(TAG, "env fetch skip: manifest unavailable")
-                    return@execute
-                }
-                if (downloadFullBundle(manifest)) {
-                    saveActiveVersion(manifest.version)
-                    Log.d(TAG, "env bundle ready version=${manifest.version}")
-                } else {
-                    Log.w(TAG, "env fetch failed version=$latest")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "env fetch error", e)
+        try {
+            val latest = fetchLastVersion()
+            if (latest == null || latest <= 0) {
+                Log.w(TAG, "env fetch skip: lastversion unavailable")
+                return
             }
+            val manifest = fetchManifest(latest)
+            if (manifest == null || manifest.url.isNullOrBlank()) {
+                Log.w(TAG, "env fetch skip: manifest unavailable")
+                return
+            }
+            if (downloadFullBundle(manifest)) {
+                saveActiveVersion(manifest.version)
+                Log.d(TAG, "env bundle ready version=${manifest.version}")
+            } else {
+                Log.w(TAG, "env fetch failed version=$latest")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "env fetch error", e)
         }
     }
 
