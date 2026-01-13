@@ -360,11 +360,12 @@ object BreezeH5Manager {
     private fun ensureEnvBundleIfMissing() {
         val root = projectRoot()
         val versions = VersionUtil.findVersions(root)
-        if (versions.isNotEmpty()) {
+        val hasValid = versions.any { hasBundle(root, it) }
+        if (hasValid) {
             Log.d(TAG, "env bundle exists, versions=$versions")
             return
         }
-        Log.w(TAG, "env bundle missing, will fetch latest full bundle for ${config.baseUrl}")
+        Log.w(TAG, "env bundle missing or invalid, will fetch latest full bundle for ${config.baseUrl}")
         try {
             val latest = fetchLastVersion()
             if (latest == null || latest <= 0) {
@@ -720,6 +721,11 @@ object BreezeH5Manager {
     private fun envHash(): Int {
         val base = config.baseUrl?.ifBlank { null } ?: "base"
         return base.hashCode().absoluteValue
+    }
+
+    private fun hasBundle(root: File, version: Int): Boolean {
+        val dir = File(root, VersionUtil.versionFolder(version))
+        return File(dir, "index.html").exists()
     }
 
     private fun isBundleValid(dir: File): Boolean {
