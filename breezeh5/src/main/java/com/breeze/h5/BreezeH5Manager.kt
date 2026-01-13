@@ -3,6 +3,8 @@ package com.breeze.h5
 import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -33,6 +35,7 @@ object BreezeH5Manager {
     private const val TAG = "BreezeH5"
     private const val PREFS = "breeze_h5_prefs"
     private const val KEY_ACTIVE_VERSION = "active_version"
+    private const val KEY_PENDING_VERSION = "pending_version"
     private const val DEFAULT_DOMAIN = "appassets.androidplatform.net"
     private const val PATCH_CHAIN_LIMIT = 5
     private const val UPDATE_MARKER = ".updating.json"
@@ -197,10 +200,22 @@ object BreezeH5Manager {
         val versions = VersionUtil.findVersions(root)
         val newest = versions.maxOrNull()
         if (newest != null) {
-            localIndexUrlIfExists(root, newest)?.let {
-                Log.d(TAG, "localIndexUrl newest=$newest url=$it")
-                saveActiveVersion(newest)
-                return it
+            // 若有监听，等待宿主确认后再激活；此处仅在无监听的情况下启用最新版本
+            if (listener == null) {
+                localIndexUrlIfExists(root, newest)?.let {
+                    Log.d(TAG, "localIndexUrl newest=$newest url=$it (no listener)")
+                    return it
+                }
+            }
+            // 如果有待激活版本，宿主重新进入时自动激活并使用
+            pendingVersion()?.let { pending ->
+                if (pending == newest) {
+                    localIndexUrlIfExists(root, pending)?.let {
+                        saveActiveVersion(pending)
+                        Log.d(TAG, "localIndexUrl pending=$pending url=$it (auto activate pending)")
+                        return it
+                    }
+                }
             }
         }
         return null
@@ -382,8 +397,16 @@ object BreezeH5Manager {
                     return@runCatching
                 }
                 if (downloadFullBundle(manifest)) {
-                    saveActiveVersion(manifest.version)
                     Log.d(TAG, "env bundle ready version=${manifest.version}")
+                    // 通知宿主决定是否激活
+                    listener?.let { l ->
+                        Handler(Looper.getMainLooper()).post {
+                            val approve = l.onVersionReady(manifest.version, localIndexUrl(manifest.version))
+                            if (approve) {
+                                saveActiveVersion(manifest.version)
+                            }
+                        }
+                    } ?: saveActiveVersion(manifest.version)
                 } else {
                     Log.w(TAG, "env fetch failed version=$latest")
                 }
@@ -469,8 +492,11 @@ object BreezeH5Manager {
 
         VersionUtil.cleanupOldVersions(root, config.keepVersions)
         val immediate = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: false
-        if (immediate) {
+        if (listener == null || immediate) {
+            saveActiveVersion(updatedVersion)
+        } else {
             Log.d(TAG, "version $updatedVersion ready (awaiting host decision/activation)")
+            savePendingVersion(updatedVersion)
         }
         return true
     }
@@ -704,10 +730,16 @@ object BreezeH5Manager {
         return "${KEY_ACTIVE_VERSION}_${project}_${envHash()}"
     }
 
+    private fun pendingPrefsKey(): String {
+        val project = config.projectName.ifBlank { "default" }
+        return "${KEY_PENDING_VERSION}_${project}_${envHash()}"
+    }
+
     private fun activeVersion(): Int? = prefs.getInt(activePrefsKey(), -1).takeIf { it > 0 }
 
     private fun saveActiveVersion(version: Int) {
         prefs.edit().putInt(activePrefsKey(), version).apply()
+        clearPendingVersion()
     }
 
     private fun projectRoot(): File = File(appContext.filesDir, "${config.projectName}_${envHash()}")
@@ -731,6 +763,25 @@ object BreezeH5Manager {
     private fun envHash(): Int {
         val base = config.baseUrl?.ifBlank { null } ?: "base"
         return base.hashCode().absoluteValue
+    }
+
+    private fun pendingVersion(): Int? = prefs.getInt(pendingPrefsKey(), -1).takeIf { it > 0 }
+
+    private fun savePendingVersion(version: Int) {
+        prefs.edit().putInt(pendingPrefsKey(), version).apply()
+    }
+
+    private fun clearPendingVersion() {
+        prefs.edit().remove(pendingPrefsKey()).apply()
+    }
+
+    private fun activatePendingIfAny() {
+        val pending = pendingVersion() ?: return
+        val root = projectRoot()
+        localIndexUrlIfExists(root, pending)?.let {
+            saveActiveVersion(pending)
+            Log.d(TAG, "activate pending version=$pending url=$it")
+        }
     }
 
     private fun hasBundle(root: File, version: Int): Boolean {
@@ -766,13 +817,6 @@ object BreezeH5Manager {
 
     /** 触发入口加载：本地优先，缺失则 fallback */
     fun loadEntry(webView: WebView) {
-        // 确保已下载的最新版本被激活
-        latestLocalVersion()?.let { latest ->
-            val active = activeVersion()
-            if (active == null || latest > active) {
-                saveActiveVersion(latest)
-            }
-        }
         val entry = resolveEntryUrl() ?: return
         webView.loadUrl(entry)
     }
