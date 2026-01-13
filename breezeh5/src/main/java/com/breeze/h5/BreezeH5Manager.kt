@@ -24,6 +24,7 @@ import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlin.math.absoluteValue
 import kotlin.math.max
 import kotlin.math.min
 
@@ -678,13 +679,18 @@ object BreezeH5Manager {
         return "https://$DEFAULT_DOMAIN$path"
     }
 
-    private fun activeVersion(): Int? = prefs.getInt(KEY_ACTIVE_VERSION, -1).takeIf { it > 0 }
-
-    private fun saveActiveVersion(version: Int) {
-        prefs.edit().putInt(KEY_ACTIVE_VERSION, version).apply()
+    private fun activePrefsKey(): String {
+        val project = config.projectName.ifBlank { "default" }
+        return "${KEY_ACTIVE_VERSION}_${project}_${envHash()}"
     }
 
-    private fun projectRoot(): File = File(appContext.filesDir, config.projectName)
+    private fun activeVersion(): Int? = prefs.getInt(activePrefsKey(), -1).takeIf { it > 0 }
+
+    private fun saveActiveVersion(version: Int) {
+        prefs.edit().putInt(activePrefsKey(), version).apply()
+    }
+
+    private fun projectRoot(): File = File(appContext.filesDir, "${config.projectName}_${envHash()}")
 
     /** 确保 appassets 路径包含 /projectName/vX/ 前缀，缺失时补全到当前最佳本地版本 */ 
     private fun ensureAppassetsPath(uri: Uri): Uri {
@@ -700,6 +706,11 @@ object BreezeH5Manager {
             path = versionPrefix + suffix
         }
         return uri.buildUpon().path(path).build()
+    }
+
+    private fun envHash(): Int {
+        val base = config.baseUrl?.ifBlank { null } ?: "base"
+        return base.hashCode().absoluteValue
     }
 
     /**
