@@ -436,14 +436,17 @@ object BreezeH5Manager {
         cleanupIncompleteUpdate()
         val latestVersion = fetchLastVersion() ?: return false
         val root = projectRoot()
-        val current = VersionUtil.findVersions(root).maxOrNull() ?: config.seedVersion
+        val versions = VersionUtil.findVersions(root)
+        val current = versions.maxOrNull() ?: config.seedVersion
+        // 若仅有种子版本，优先走全量包，避免跨环境的种子导致补丁生成不完整资源
+        val forceFull = versions.size == 1 && versions.firstOrNull() == config.seedVersion
         if (latestVersion <= current) {
             Log.d(TAG, "no update: remote=$latestVersion current=$current")
             return false
         }
 
         val manifestLatest = fetchManifest(latestVersion) ?: return false
-        val usePatchChain = latestVersion - current in 1..PATCH_CHAIN_LIMIT
+        val usePatchChain = !forceFull && latestVersion - current in 1..PATCH_CHAIN_LIMIT
         val updatedVersion = if (usePatchChain) {
             applyPatchChain(current, latestVersion) ?: run {
                 Log.w(TAG, "patch chain failed, fallback full v$latestVersion")
@@ -597,6 +600,9 @@ object BreezeH5Manager {
                 throw IOException("Size mismatch for version ${manifest.version}")
             }
             FileUtil.unzip(zipFile, targetDir)
+            if (!isBundleValid(targetDir)) {
+                throw IOException("bundle invalid: missing index/js/css for v${manifest.version}")
+            }
             clearUpdating()
             true
         } catch (e: Exception) {
@@ -653,6 +659,9 @@ object BreezeH5Manager {
             }
             FileUtil.unzip(patchFile, targetDir)
             manifest.deleted?.let { FileUtil.deletePaths(targetDir, it) }
+            if (!isBundleValid(targetDir)) {
+                throw IOException("bundle invalid after patch: missing index/js/css for v${manifest.version}")
+            }
             clearUpdating()
             true
         } catch (e: Exception) {
@@ -711,6 +720,15 @@ object BreezeH5Manager {
     private fun envHash(): Int {
         val base = config.baseUrl?.ifBlank { null } ?: "base"
         return base.hashCode().absoluteValue
+    }
+
+    private fun isBundleValid(dir: File): Boolean {
+        val index = File(dir, "index.html")
+        val jsDir = File(dir, "js")
+        val cssDir = File(dir, "css")
+        return index.exists() &&
+            jsDir.exists() && (jsDir.listFiles()?.isNotEmpty() == true) &&
+            cssDir.exists() && (cssDir.listFiles()?.isNotEmpty() == true)
     }
 
     /**
