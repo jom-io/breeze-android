@@ -399,11 +399,12 @@ object BreezeH5Manager {
                 if (downloadFullBundle(manifest)) {
                     Log.d(TAG, "env bundle ready version=${manifest.version}")
                     if (listener != null) {
-                        savePendingVersion(manifest.version)
                         Handler(Looper.getMainLooper()).post {
                             val approve = listener?.onVersionReady(manifest.version, localIndexUrl(manifest.version)) ?: false
                             if (approve) {
                                 saveActiveVersion(manifest.version)
+                            } else {
+                                savePendingVersion(manifest.version)
                             }
                         }
                     } else {
@@ -496,12 +497,13 @@ object BreezeH5Manager {
         val hasListener = listener != null
         val approve = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: true
         if (hasListener) {
-            // 有监听时统一交由宿主确认，先记录待激活，实际激活在 loadEntry/再次进入时执行
-            savePendingVersion(updatedVersion)
-            if (!approve) {
-                Log.d(TAG, "version $updatedVersion pending (host declined now)")
+            if (approve) {
+                saveActiveVersion(updatedVersion)
+                clearPendingVersion()
+                Log.d(TAG, "version $updatedVersion activated by listener approval")
             } else {
-                Log.d(TAG, "version $updatedVersion pending (host approved, will activate on loadEntry)")
+                savePendingVersion(updatedVersion)
+                Log.d(TAG, "version $updatedVersion pending (host declined now)")
             }
         } else {
             saveActiveVersion(updatedVersion)
