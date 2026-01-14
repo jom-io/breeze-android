@@ -398,15 +398,17 @@ object BreezeH5Manager {
                 }
                 if (downloadFullBundle(manifest)) {
                     Log.d(TAG, "env bundle ready version=${manifest.version}")
-                    // 通知宿主决定是否激活
-                    listener?.let { l ->
+                    if (listener != null) {
+                        savePendingVersion(manifest.version)
                         Handler(Looper.getMainLooper()).post {
-                            val approve = l.onVersionReady(manifest.version, localIndexUrl(manifest.version))
+                            val approve = listener?.onVersionReady(manifest.version, localIndexUrl(manifest.version)) ?: false
                             if (approve) {
                                 saveActiveVersion(manifest.version)
                             }
                         }
-                    } ?: saveActiveVersion(manifest.version)
+                    } else {
+                        saveActiveVersion(manifest.version)
+                    }
                 } else {
                     Log.w(TAG, "env fetch failed version=$latest")
                 }
@@ -491,12 +493,18 @@ object BreezeH5Manager {
         } ?: return false
 
         VersionUtil.cleanupOldVersions(root, config.keepVersions)
-        val immediate = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: false
-        if (listener == null || immediate) {
-            saveActiveVersion(updatedVersion)
-        } else {
-            Log.d(TAG, "version $updatedVersion ready (awaiting host decision/activation)")
+        val hasListener = listener != null
+        val approve = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: true
+        if (hasListener) {
+            // 有监听时统一交由宿主确认，先记录待激活，实际激活在 loadEntry/再次进入时执行
             savePendingVersion(updatedVersion)
+            if (!approve) {
+                Log.d(TAG, "version $updatedVersion pending (host declined now)")
+            } else {
+                Log.d(TAG, "version $updatedVersion pending (host approved, will activate on loadEntry)")
+            }
+        } else {
+            saveActiveVersion(updatedVersion)
         }
         return true
     }
