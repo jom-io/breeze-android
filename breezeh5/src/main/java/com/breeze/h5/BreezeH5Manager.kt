@@ -398,17 +398,14 @@ object BreezeH5Manager {
                 }
                 if (downloadFullBundle(manifest)) {
                     Log.d(TAG, "env bundle ready version=${manifest.version}")
-                    if (listener != null) {
-                        Handler(Looper.getMainLooper()).post {
-                            val approve = listener?.onVersionReady(manifest.version, localIndexUrl(manifest.version)) ?: false
-                            if (approve) {
-                                saveActiveVersion(manifest.version)
-                            } else {
-                                savePendingVersion(manifest.version)
-                            }
-                        }
-                    } else {
+                    val approve = listener?.onVersionReady(manifest.version, localIndexUrl(manifest.version)) ?: true
+                    if (approve) {
                         saveActiveVersion(manifest.version)
+                        clearPendingVersion()
+                        Log.d(TAG, "env bundle activated version=${manifest.version}")
+                    } else {
+                        savePendingVersion(manifest.version)
+                        Log.d(TAG, "env bundle pending version=${manifest.version} (host declined)")
                     }
                 } else {
                     Log.w(TAG, "env fetch failed version=$latest")
@@ -494,19 +491,14 @@ object BreezeH5Manager {
         } ?: return false
 
         VersionUtil.cleanupOldVersions(root, config.keepVersions)
-        val hasListener = listener != null
         val approve = listener?.onVersionReady(updatedVersion, localIndexUrl(updatedVersion)) ?: true
-        if (hasListener) {
-            if (approve) {
-                saveActiveVersion(updatedVersion)
-                clearPendingVersion()
-                Log.d(TAG, "version $updatedVersion activated by listener approval")
-            } else {
-                savePendingVersion(updatedVersion)
-                Log.d(TAG, "version $updatedVersion pending (host declined now)")
-            }
-        } else {
+        if (approve) {
             saveActiveVersion(updatedVersion)
+            clearPendingVersion()
+            Log.d(TAG, "version $updatedVersion activated")
+        } else {
+            savePendingVersion(updatedVersion)
+            Log.d(TAG, "version $updatedVersion pending (host declined now)")
         }
         return true
     }
