@@ -34,6 +34,24 @@ internal object FileUtil {
                 entry = zis.nextEntry
             }
         }
+        normalizeUnzipRoot(targetDir)
+    }
+
+    private fun normalizeUnzipRoot(targetDir: File) {
+        val rootIndex = File(targetDir, "index.html")
+        if (rootIndex.exists()) return
+        val entries = targetDir.listFiles() ?: return
+        val candidate = entries
+            .filter { it.isDirectory && it.name != "__MACOSX" }
+            .firstOrNull { File(it, "index.html").exists() } ?: return
+        candidate.listFiles()?.forEach { child ->
+            val dest = File(targetDir, child.name)
+            if (!child.renameTo(dest)) {
+                child.copyRecursively(dest, overwrite = true)
+                child.deleteRecursively()
+            }
+        }
+        candidate.deleteRecursively()
     }
 
     fun checksumSha256(file: File): String {
