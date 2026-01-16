@@ -112,9 +112,56 @@ function buildFileMap(dir) {
   return map;
 }
 
+function resolveRootDir(dir) {
+  const index = path.join(dir, 'index.html');
+  if (fs.existsSync(index)) return dir;
+  const entries = fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory());
+  if (entries.length === 1) {
+    const candidate = path.join(dir, entries[0].name);
+    if (fs.existsSync(path.join(candidate, 'index.html'))) {
+      log(`normalize root: ${dir} -> ${candidate}`);
+      return candidate;
+    }
+  }
+  return dir;
+}
+
+function validateIndexAssets(dir) {
+  const index = path.join(dir, 'index.html');
+  if (!fs.existsSync(index)) return;
+  const html = fs.readFileSync(index, 'utf8');
+  const refs = [];
+  const re = /\b(?:src|href)\s*=\s*["']([^"']+)["']/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    refs.push(match[1]);
+  }
+  const missing = [];
+  for (const ref of refs) {
+    if (/^(https?:)?\/\//i.test(ref) || ref.startsWith('data:')) continue;
+    const cleaned = ref.split('#')[0].split('?')[0];
+    if (!cleaned.endsWith('.js') && !cleaned.endsWith('.css')) continue;
+    const rel = cleaned.replace(/^\/+/, '');
+    const target = path.join(dir, rel);
+    if (!fs.existsSync(target)) missing.push(rel);
+  }
+  if (missing.length > 0) {
+    log(`missing assets referenced by index.html: ${missing.slice(0, 10).join(', ')}`);
+    throw new Error('MISSING_ASSET');
+  }
+}
+
 function diffDirs(oldDir, newDir) {
-  const oldMap = buildFileMap(oldDir);
-  const newMap = buildFileMap(newDir);
+  const oldRoot = resolveRootDir(oldDir);
+  const newRoot = resolveRootDir(newDir);
+  const oldRel = path.relative(oldDir, oldRoot);
+  const newRel = path.relative(newDir, newRoot);
+  if (oldRel !== newRel) {
+    log(`skip patch: root mismatch old=${oldRel || '.'} new=${newRel || '.'}`);
+    return { changed: [], deleted: [], root: newRoot, skip: true };
+  }
+  const oldMap = buildFileMap(oldRoot);
+  const newMap = buildFileMap(newRoot);
   const changed = [];
   const deleted = [];
   for (const [rel, hash] of newMap.entries()) {
@@ -124,7 +171,7 @@ function diffDirs(oldDir, newDir) {
   for (const rel of oldMap.keys()) {
     if (!newMap.has(rel)) deleted.push(rel);
   }
-  return { changed, deleted };
+  return { changed, deleted, root: newRoot, skip: false };
 }
 
 function copyChangedFiles(srcDir, destDir, relPaths) {
@@ -156,13 +203,15 @@ async function generatePatch(prevVersion, versionName, versionDir) {
     await download(prevManifest.url, prevZipPath);
     new AdmZip(prevZipPath).extractAllTo(prevDir, true);
 
-    const { changed, deleted } = diffDirs(prevDir, BUILD_DIR);
+    const diff = diffDirs(prevDir, BUILD_DIR);
+    if (diff.skip) return {};
+    const { changed, deleted, root: newRoot } = diff;
     if (changed.length === 0 && deleted.length === 0) {
       log('no diff with previous version, abort release');
       throw new Error('NO_DIFF');
     }
 
-    copyChangedFiles(BUILD_DIR, patchDir, changed);
+    copyChangedFiles(newRoot, patchDir, changed);
 
     const patchZipPath = path.join(versionDir, 'patch.zip');
     const patchZip = new AdmZip();
@@ -196,12 +245,14 @@ async function generatePatch(prevVersion, versionName, versionDir) {
   fs.mkdirSync(versionDir, { recursive: true });
 
   try {
+    const buildRoot = resolveRootDir(BUILD_DIR);
+    validateIndexAssets(buildRoot);
     const patchMeta = await generatePatch(latest, versionName, versionDir);
 
     const zipPath = path.join(versionDir, 'dist.zip');
-    log(`zip from ${BUILD_DIR} -> ${zipPath}`);
+    log(`zip from ${buildRoot} -> ${zipPath}`);
     const zip = new AdmZip();
-    zip.addLocalFolder(BUILD_DIR);
+    zip.addLocalFolder(buildRoot);
     zip.writeZip(zipPath);
 
     const hash = sha256(zipPath);

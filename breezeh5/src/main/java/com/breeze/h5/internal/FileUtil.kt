@@ -4,6 +4,7 @@ import android.content.Context
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 
 internal object FileUtil {
@@ -80,13 +81,52 @@ internal object FileUtil {
     }
 
     fun deletePaths(root: File, paths: List<String>) {
+        deletePaths(root, paths, emptySet())
+    }
+
+    fun deletePaths(root: File, paths: List<String>, keepPaths: Set<String>) {
         paths.forEach { rel ->
-            // 防止路径穿越
-            if (rel.contains("..")) return@forEach
-            val target = File(root, rel)
+            val normalized = normalizeRelativePath(rel) ?: return@forEach
+            if (keepPaths.contains(normalized) || keepPaths.contains(rel)) return@forEach
+            val target = File(root, normalized)
             if (target.exists()) {
                 target.deleteRecursively()
             }
         }
+    }
+
+    fun listZipEntries(zipFile: File): Set<String> {
+        ZipFile(zipFile).use { zip ->
+            val result = mutableSetOf<String>()
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (!entry.isDirectory) {
+                    val normalized = normalizeZipPath(entry.name)
+                    if (normalized.isNotBlank()) {
+                        result.add(normalized)
+                    }
+                }
+            }
+            return result
+        }
+    }
+
+    private fun normalizeZipPath(path: String): String {
+        return path.replace("\\", "/").trimStart('/')
+    }
+
+    private fun normalizeRelativePath(path: String): String? {
+        if (path.isBlank()) return null
+        val normalized = path.replace("\\", "/").trimStart('/')
+        if (normalized.isBlank()) return null
+        if (normalized.contains("..")) return null
+        if (isAbsoluteLike(path)) return null
+        return normalized
+    }
+
+    private fun isAbsoluteLike(path: String): Boolean {
+        if (path.startsWith("/") || path.startsWith("\\")) return true
+        return Regex("^[A-Za-z]:[\\\\/].*").matches(path)
     }
 }

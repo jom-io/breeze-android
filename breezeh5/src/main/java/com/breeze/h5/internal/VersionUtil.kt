@@ -7,7 +7,7 @@ object VersionUtil {
 
     fun parseVersionName(name: String): Int? {
         if (!name.startsWith(PREFIX, ignoreCase = true)) return null
-        return name.removePrefix(PREFIX).toIntOrNull()
+        return name.substring(PREFIX.length).toIntOrNull()
     }
 
     fun versionFolder(version: Int): String = "$PREFIX$version"

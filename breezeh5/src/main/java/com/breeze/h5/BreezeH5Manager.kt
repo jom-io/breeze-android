@@ -27,6 +27,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.absoluteValue
 import kotlin.math.max
 import kotlin.math.min
@@ -56,6 +57,7 @@ object BreezeH5Manager {
     private var imageCacheInterceptor: ImageCacheInterceptor? = null
     private val sessionId: String = System.currentTimeMillis().toString()
     private var pendingPrompted: Boolean = false
+    private val missingLocalTriggered = AtomicBoolean(false)
 
     private val prefs: SharedPreferences by lazy {
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -71,7 +73,9 @@ object BreezeH5Manager {
         this.config = config
         this.listener = updateListener
         this.loadListener = loadListener
+        missingLocalTriggered.set(false)
         buildAssetLoader()
+        cleanupIncompleteUpdate()
         ensureSeedVersion()
         ensureEnvBundleIfMissing()
         resetBackoffAndSchedule()
@@ -162,8 +166,8 @@ object BreezeH5Manager {
 
     fun bestLocalVersion(): Int? {
         val root = projectRoot()
+        val versions = validVersions(root)
         val active = activeVersion()
-        val versions = VersionUtil.findVersions(root)
         val latest = versions.maxOrNull()
         // 兼顾历史逻辑：若当前激活版本存在且仍在本地，则优先返回激活版本，否则返回最新
         val chosen = when {
@@ -185,7 +189,7 @@ object BreezeH5Manager {
 
     /** 最新下载到本地的版本（不论是否激活） */
     private fun latestLocalVersion(): Int? {
-        val versions = VersionUtil.findVersions(projectRoot())
+        val versions = validVersions(projectRoot())
         val latest = versions.maxOrNull()
         latest?.let { Log.d(TAG, "latestLocalVersion=$it") }
         return latest
@@ -193,14 +197,14 @@ object BreezeH5Manager {
 
     fun bestLocalIndexUrl(): String? {
         val root = projectRoot()
+        val versions = validVersions(root)
         val active = activeVersion()
-        if (active != null) {
+        if (active != null && versions.contains(active)) {
             localIndexUrlIfExists(root, active)?.let {
                 Log.d(TAG, "localIndexUrl active=$active url=$it")
                 return it
             }
         }
-        val versions = VersionUtil.findVersions(root)
         val newest = versions.maxOrNull()
         if (newest != null) {
             // 若有监听，等待宿主确认后再激活；此处仅在无监听的情况下启用最新版本
@@ -276,6 +280,16 @@ object BreezeH5Manager {
                     // 如果是缺失的 favicon 之类的资源，避免报错，返回空响应兜底
                     if (target.path?.endsWith(".ico") == true) {
                         return emptyResponse("image/x-icon")
+                    }
+                    val path = target.path
+                    if (path?.endsWith(".js") == true || path?.endsWith(".css") == true) {
+                        val localFile = localFileFor(target)
+                        if (localFile != null && !localFile.exists()) {
+                            Log.w(TAG, "local asset missing: ${localFile.absolutePath}")
+                            maybeHandleMissingLocalAsset(view, target)
+                            val mime = if (path.endsWith(".css")) "text/css" else "application/javascript"
+                            return emptyResponse(mime)
+                        }
                     }
                 }
 
@@ -369,8 +383,8 @@ object BreezeH5Manager {
      */
     private fun ensureEnvBundleIfMissing() {
         val root = projectRoot()
-        val versions = VersionUtil.findVersions(root)
-        val hasValid = versions.any { hasBundle(root, it) }
+        val versions = validVersions(root)
+        val hasValid = versions.isNotEmpty()
         if (hasValid) {
             Log.d(TAG, "env bundle exists, versions=$versions")
             return
@@ -676,6 +690,7 @@ object BreezeH5Manager {
             FileUtil.copyDir(baseDir, targetDir)
             Log.d(TAG, "download patch v${manifest.version} from=${manifest.patchFrom} url=${manifest.patchUrl}")
             download(manifest.patchUrl!!, patchFile)
+            val patchEntries = FileUtil.listZipEntries(patchFile)
             if (!manifest.patchHash.isNullOrBlank()) {
                 val actual = FileUtil.checksumSha256(patchFile)
                 if (!actual.equals(manifest.patchHash, ignoreCase = true)) {
@@ -686,7 +701,7 @@ object BreezeH5Manager {
                 throw IOException("Patch size mismatch for version ${manifest.version}")
             }
             FileUtil.unzip(patchFile, targetDir)
-            manifest.deleted?.let { FileUtil.deletePaths(targetDir, it) }
+            manifest.deleted?.let { FileUtil.deletePaths(targetDir, it, patchEntries) }
             if (!isBundleValid(targetDir)) {
                 throw IOException("bundle invalid after patch: missing index/js/css for v${manifest.version}")
             }
@@ -703,12 +718,8 @@ object BreezeH5Manager {
     }
 
     private fun localIndexUrlIfExists(root: File, version: Int): String? {
-        val localIndex = File(root, "${VersionUtil.versionFolder(version)}/index.html")
-        return if (localIndex.exists()) {
-            localIndexUrl(version)
-        } else {
-            null
-        }
+        val dir = File(root, VersionUtil.versionFolder(version))
+        return if (isBundleValid(dir)) localIndexUrl(version) else null
     }
 
     fun localIndexUrl(version: Int): String {
@@ -735,7 +746,12 @@ object BreezeH5Manager {
 
     private fun saveActiveVersion(version: Int) {
         prefs.edit().putInt(activePrefsKey(), version).apply()
+        missingLocalTriggered.set(false)
         clearPendingVersion()
+    }
+
+    private fun clearActiveVersion() {
+        prefs.edit().remove(activePrefsKey()).apply()
     }
 
     private fun projectRoot(): File = File(appContext.filesDir, "${config.projectName}_${envHash()}")
@@ -809,6 +825,75 @@ object BreezeH5Manager {
         return index.exists() &&
             jsDir.exists() && (jsDir.listFiles()?.isNotEmpty() == true) &&
             cssDir.exists() && (cssDir.listFiles()?.isNotEmpty() == true)
+    }
+
+    private fun validVersions(root: File): List<Int> {
+        cleanupIncompleteUpdate()
+        val versions = VersionUtil.findVersions(root)
+        if (versions.isEmpty()) return emptyList()
+        val active = activeVersion()
+        val pending = pendingVersion()
+        val valid = mutableListOf<Int>()
+        versions.forEach { version ->
+            val dir = File(root, VersionUtil.versionFolder(version))
+            if (isBundleValid(dir)) {
+                valid.add(version)
+            } else {
+                Log.w(TAG, "bundle invalid, remove v$version")
+                FileUtil.deleteQuietly(dir)
+                if (active == version) clearActiveVersion()
+                if (pending == version) clearPendingVersion()
+            }
+        }
+        return valid
+    }
+
+    private fun parseVersionFromPath(path: String?): Int? {
+        if (path.isNullOrBlank()) return null
+        val prefix = "/${config.projectName}/v"
+        val idx = path.indexOf(prefix)
+        if (idx < 0) return null
+        val start = idx + prefix.length
+        if (start >= path.length) return null
+        val end = path.indexOf('/', start).takeIf { it > start } ?: path.length
+        return path.substring(start, end).toIntOrNull()
+    }
+
+    private fun localFileFor(uri: Uri): File? {
+        val path = uri.path ?: return null
+        val prefix = "/${config.projectName}/"
+        if (!path.startsWith(prefix)) return null
+        val rel = path.removePrefix(prefix)
+        return File(projectRoot(), rel)
+    }
+
+    private fun invalidateVersion(version: Int?, reason: String) {
+        if (version == null) {
+            Log.w(TAG, "invalidate version skipped: $reason")
+            return
+        }
+        val dir = File(projectRoot(), VersionUtil.versionFolder(version))
+        FileUtil.deleteQuietly(dir)
+        if (activeVersion() == version) clearActiveVersion()
+        if (pendingVersion() == version) clearPendingVersion()
+        Log.w(TAG, "invalidated v$version: $reason")
+    }
+
+    private fun isFallbackUrl(url: String?): Boolean {
+        val fallback = config.fallbackUrl ?: return false
+        return url?.startsWith(fallback) == true
+    }
+
+    private fun maybeHandleMissingLocalAsset(view: WebView, uri: Uri) {
+        if (!missingLocalTriggered.compareAndSet(false, true)) return
+        val version = parseVersionFromPath(uri.path)
+        invalidateVersion(version, "missing local asset ${uri.path}")
+        val fallback = config.fallbackUrl
+        if (!fallback.isNullOrBlank() && !isFallbackUrl(fallback)) {
+            lastEntryIsLocal = false
+            view.post { view.loadUrl(fallback) }
+        }
+        loadListener?.onAllFailed(uri.toString(), "missing local asset")
     }
 
     /**
