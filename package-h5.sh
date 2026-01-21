@@ -293,8 +293,6 @@ yarn install --frozen-lockfile
 echo "=== yarn build ==="
 if yarn run -s build-dev:h5; then
   echo "use build-dev:h5"
-elif yarn run -s build:h5; then
-  echo "fallback to build:h5"
 else
   echo "找不到 build-dev:h5/build:h5 脚本" && exit 1
 fi
