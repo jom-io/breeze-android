@@ -58,6 +58,7 @@ object BreezeH5Manager {
     private val sessionId: String = System.currentTimeMillis().toString()
     private var pendingPrompted: Boolean = false
     private val missingLocalTriggered = AtomicBoolean(false)
+    private var sessionActiveVersion: Int? = null
 
     private val prefs: SharedPreferences by lazy {
         appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -74,6 +75,7 @@ object BreezeH5Manager {
         this.listener = updateListener
         this.loadListener = loadListener
         missingLocalTriggered.set(false)
+        sessionActiveVersion = null
         buildAssetLoader()
         cleanupIncompleteUpdate()
         ensureSeedVersion()
@@ -96,10 +98,12 @@ object BreezeH5Manager {
         val local = bestLocalIndexUrl()
         if (local != null) {
             lastEntryIsLocal = true
+            sessionActiveVersion = parseVersionFromPath(Uri.parse(local).path)
             return local
         }
         Log.w(TAG, "no local bundle, fallback=${config.fallbackUrl}")
         lastEntryIsLocal = false
+        sessionActiveVersion = null
         return config.fallbackUrl
     }
 
@@ -492,7 +496,7 @@ object BreezeH5Manager {
             if (downloadFullBundle(manifestLatest)) manifestLatest.version else null
         } ?: return false
 
-        VersionUtil.cleanupOldVersions(root, config.keepVersions)
+        cleanupOldVersionsSafe(root)
         if (listener != null) {
             savePendingVersion(updatedVersion)
             if (notify) {
@@ -752,6 +756,7 @@ object BreezeH5Manager {
 
     private fun clearActiveVersion() {
         prefs.edit().remove(activePrefsKey()).apply()
+        sessionActiveVersion = null
     }
 
     private fun projectRoot(): File = File(appContext.filesDir, "${config.projectName}_${envHash()}")
@@ -763,7 +768,8 @@ object BreezeH5Manager {
         if (!path.startsWith(projectPrefix)) {
             path = projectPrefix + path.removePrefix("/").removePrefix("\\")
         }
-        val best = bestLocalVersion() ?: return uri.buildUpon().path(path).build()
+        val mapping = sessionActiveVersion ?: activeVersion() ?: bestLocalVersion()
+        val best = mapping ?: return uri.buildUpon().path(path).build()
         val versionPrefix = "$projectPrefix${VersionUtil.versionFolder(best)}/"
         if (!path.startsWith(versionPrefix)) {
             val suffix = path.removePrefix(projectPrefix).removePrefix("/")
@@ -827,6 +833,19 @@ object BreezeH5Manager {
             cssDir.exists() && (cssDir.listFiles()?.isNotEmpty() == true)
     }
 
+    private fun cleanupOldVersionsSafe(root: File) {
+        if (config.keepVersions <= 0) return
+        val versions = VersionUtil.findVersions(root).sorted()
+        if (versions.size <= config.keepVersions) return
+        val protected = setOfNotNull(activeVersion(), pendingVersion())
+        val removable = versions.filterNot { protected.contains(it) }
+        if (removable.isEmpty()) return
+        val maxDeletes = (versions.size - config.keepVersions).coerceAtLeast(0)
+        removable.take(maxDeletes).forEach { version ->
+            FileUtil.deleteQuietly(File(root, VersionUtil.versionFolder(version)))
+        }
+    }
+
     private fun validVersions(root: File): List<Int> {
         cleanupIncompleteUpdate()
         val versions = VersionUtil.findVersions(root)
@@ -876,6 +895,7 @@ object BreezeH5Manager {
         FileUtil.deleteQuietly(dir)
         if (activeVersion() == version) clearActiveVersion()
         if (pendingVersion() == version) clearPendingVersion()
+        if (sessionActiveVersion == version) sessionActiveVersion = null
         Log.w(TAG, "invalidated v$version: $reason")
     }
 
