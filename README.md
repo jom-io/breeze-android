@@ -11,7 +11,7 @@
 ## 引入依赖（JitPack）
 ```gradle
 repositories { maven { url 'https://jitpack.io' } }
-dependencies { implementation 'com.github.jom-io:breeze-android:1.0.0' }
+dependencies { implementation 'com.github.jom-io:breeze-android:1.0.3-rc2' }
 ```
 如需升级，替换为最新 tag。
 
